@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>Spanish Tutor</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .app { background: #f0fdf4; }
+        .title { color: #0F6E56; }
+        .subtitle { color: #5DCAA5; }
+        .chat-window { border-color: #9FE1CB; }
+        .bubble.ai { background: #E1F5EE; color: #085041; border-bottom-left-radius: 4px; }
+        .bubble.u { background: #5DCAA5; color: #04342C; border-bottom-right-radius: 4px; }
+        .av.ai { background: #E1F5EE; }
+        .av.u { background: #5DCAA5; }
+        .pill-input { border-color: #9FE1CB; color: #085041; }
+        .pill-input:focus { border-color: #5DCAA5; }
+        .pill-input::placeholder { color: #9FE1CB; }
+        .ask-btn { background: #1D9E75; }
+        .ask-btn:hover { background: #0F6E56; }
+        .ask-btn:disabled { background: #9FE1CB; cursor: not-allowed; }
+        .dot { background: #9FE1CB; }
+        .dot.on { background: #1D9E75; }
+        .home-link { position: relative; z-index: 2; margin-top: 16px; font-size: 14px; color: #5DCAA5; text-decoration: none; font-family: 'Baloo 2', cursive; }
+        .home-link:hover { color: #0F6E56; }
+        .mic-btn { background: white; border: 2.5px solid #9FE1CB; color: #1D9E75; padding: 13px 16px; border-radius: 50px; font-size: 20px; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
+        .mic-btn:hover { background: #E1F5EE; }
+        .mic-btn.listening { background: #1D9E75; border-color: #1D9E75; animation: pulse 1s infinite; }
+        .speak-btn { background: none; border: none; cursor: pointer; font-size: 16px; margin-left: 6px; opacity: 0.6; vertical-align: middle; }
+        .speak-btn:hover { opacity: 1; }
+        @keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }
+        .spanish-text { display: block; font-size: 20px; font-weight: 800; color: #085041; margin-bottom: 6px; line-height: 1.4; }
+        .english-text { display: block; font-size: 14px; color: #888780; background: #f1f0eb; border-radius: 8px; padding: 5px 10px; margin-top: 4px; font-style: italic; font-weight: 400; }
+        .tip-text { display: block; font-size: 13px; color: #1D9E75; margin-top: 8px; font-style: italic; background: #E1F5EE; padding: 5px 10px; border-radius: 8px; font-weight: 400; }
+        .voice-status { font-size: 13px; color: #5DCAA5; text-align: center; margin-top: 4px; min-height: 18px; font-family: 'Baloo 2', cursive; }
+    </style>
+</head>
+<body>
+<div class="app">
+
+    <div class="header">
+        <div class="title">🇪🇸 Spanish Tutor</div>
+        <div class="subtitle">Type or speak — I'll teach and correct you ✨</div>
+    </div>
+
+    <div class="chat-window" id="chat">
+        <div class="empty" id="empty">Say anything! Try "Hello" or "What is your name?" 👋</div>
+    </div>
+
+    <div class="input-wrap">
+        <div class="input-row">
+            <button class="mic-btn" id="micBtn" onclick="toggleMic()" title="Click to speak">🎤</button>
+            <input class="pill-input" id="userInput" placeholder="Type or speak in English or Spanish..." onkeydown="if(event.key==='Enter') send()"/>
+            <button class="ask-btn" id="sendBtn" onclick="send()">Send!</button>
+        </div>
+        <div class="voice-status" id="voiceStatus"></div>
+        <div class="dots" style="margin-top:6px;">
+            <div class="dot on" id="d1"></div>
+            <div class="dot" id="d2"></div>
+            <div class="dot" id="d3"></div>
+        </div>
+    </div>
+
+    <a class="home-link" href="/">← Back to home</a>
+
+</div>
+
+<script>
+    let msgCount = 0;
+    let recognition = null;
+    let isListening = false;
+
+    function updateDots() {
+        document.getElementById('d2').className = 'dot' + (msgCount >= 2 ? ' on' : '');
+        document.getElementById('d3').className = 'dot' + (msgCount >= 4 ? ' on' : '');
+    }
+
+    function extractSection(text, label) {
+        const regex = new RegExp(label + ':\\s*(.+?)(?=\\n[A-Z]+:|$)', 'si');
+        const match = text.match(regex);
+        return match ? match[1].replace(/\*([^*]+)\*/g, '<strong>$1</strong>').trim() : '';
+    }
+
+    function extractSectionPlain(text, label) {
+        const regex = new RegExp(label + ':\\s*(.+?)(?=\\n[A-Z]+:|$)', 'si');
+        const match = text.match(regex);
+        return match ? match[1].replace(/\*([^*]+)\*/g, '$1').replace(/[\u{1F300}-\u{1FFFF}]/gu, '').trim() : '';
+    }
+
+    function formatReply(text) {
+        const spanish = extractSection(text, 'SPANISH');
+        const english = extractSection(text, 'ENGLISH');
+        const tip = extractSection(text, 'TIP');
+        let html = '';
+        if (spanish) html += `<span class="spanish-text">${spanish}</span>`;
+        if (english) html += `<span class="english-text">${english}</span>`;
+        if (tip) html += `<span class="tip-text">Tip: ${tip}</span>`;
+        return html || text;
+    }
+
+    function speakText(rawText) {
+        window.speechSynthesis.cancel();
+        const spanish = extractSectionPlain(rawText, 'SPANISH');
+        if (!spanish) return;
+
+        const utterance = new SpeechSynthesisUtterance(spanish);
+        utterance.lang = 'es-ES';
+        utterance.rate = 0.8;
+        utterance.pitch = 1;
+
+        const voices = window.speechSynthesis.getVoices();
+        const spanishVoice =
+            voices.find(v => v.name === 'Monica') ||
+            voices.find(v => v.name === 'Paulina') ||
+            voices.find(v => v.lang === 'es-ES') ||
+            voices.find(v => v.lang.startsWith('es'));
+        if (spanishVoice) utterance.voice = spanishVoice;
+
+        window.speechSynthesis.speak(utterance);
+    }
+
+    function setupSpeechRecognition() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            document.getElementById('micBtn').style.display = 'none';
+            return;
+        }
+        recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = 'es-ES';
+
+        recognition.onstart = () => {
+            isListening = true;
+            document.getElementById('micBtn').classList.add('listening');
+            document.getElementById('voiceStatus').textContent = 'Listening... speak now';
+        };
+
+        recognition.onresult = (e) => {
+            const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+            document.getElementById('userInput').value = transcript;
+            if (e.results[e.results.length - 1].isFinal) {
+                document.getElementById('voiceStatus').textContent = 'Got it!';
+                setTimeout(() => document.getElementById('voiceStatus').textContent = '', 1000);
+            }
+        };
+
+        recognition.onend = () => {
+            isListening = false;
+            document.getElementById('micBtn').classList.remove('listening');
+            const text = document.getElementById('userInput').value.trim();
+            if (text) send();
+        };
+
+        recognition.onerror = () => {
+            isListening = false;
+            document.getElementById('micBtn').classList.remove('listening');
+            document.getElementById('voiceStatus').textContent = 'Could not hear you, try again';
+            setTimeout(() => document.getElementById('voiceStatus').textContent = '', 2000);
+        };
+    }
+
+    function toggleMic() {
+        if (!recognition) setupSpeechRecognition();
+        if (isListening) {
+            recognition.stop();
+        } else {
+            recognition.lang = 'es-ES';
+            recognition.start();
+        }
+    }
+
+    async function send() {
+        const input = document.getElementById('userInput');
+        const text = input.value.trim();
+        if (!text) return;
+
+        const chat = document.getElementById('chat');
+        const empty = document.getElementById('empty');
+        if (empty) empty.remove();
+
+        chat.innerHTML += `<div class="bw u"><div class="av u">😊</div><div class="bubble u">${text}</div></div>`;
+        input.value = '';
+        msgCount++;
+        updateDots();
+
+        document.getElementById('sendBtn').disabled = true;
+        document.getElementById('micBtn').disabled = true;
+        chat.innerHTML += `<div class="bw" id="loading"><div class="av ai">🇪🇸</div><div class="bubble ai thinking">pensando...</div></div>`;
+        chat.scrollTop = chat.scrollHeight;
+
+        const res = await fetch('/spanish/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+
+        const data = await res.json();
+        document.getElementById('loading').remove();
+
+        const msgId = 'msg' + Date.now();
+        const formatted = formatReply(data.reply);
+        chat.innerHTML += `
+            <div class="bw">
+                <div class="av ai">🇪🇸</div>
+                <div class="bubble ai" id="${msgId}" data-raw="${encodeURIComponent(data.reply)}">${formatted}
+                    <button class="speak-btn" onclick="speakText(decodeURIComponent(document.getElementById('${msgId}').dataset.raw))" title="Listen">🔊</button>
+                </div>
+            </div>`;
+
+        speakText(data.reply);
+
+        document.getElementById('sendBtn').disabled = false;
+        document.getElementById('micBtn').disabled = false;
+        chat.scrollTop = chat.scrollHeight;
+    }
+
+    window.speechSynthesis.onvoiceschanged = () => {};
+    setupSpeechRecognition();
+</script>
+</body>
+</html>
