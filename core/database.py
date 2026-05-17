@@ -1,70 +1,59 @@
-import sqlite3
+from sqlalchemy import create_engine, Column, String, Integer, Boolean, DateTime, Text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 from datetime import datetime
 
+DATABASE_URL = "postgresql://localhost/learning_hub"
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(bind=engine)
+Base = declarative_base()
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(255))
+    user_message = Column(Text)
+    ai_reply = Column(Text)
+    char_count = Column(Integer)
+    passed_validation = Column(Boolean)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
 def init_db():
-    conn = sqlite3.connect('conversations.db')
-    c = conn.cursor()
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS conversations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT,
-            user_message TEXT,
-            ai_reply TEXT,
-            char_count INTEGER,
-            passed_validation INTEGER,
-            timestamp TEXT
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    Base.metadata.create_all(engine)
+    print("PostgreSQL database initialized")
 
 def save_message(session_id, user_message, ai_reply, passed_validation):
-    conn = sqlite3.connect('conversations.db')
-    c = conn.cursor()
-    c.execute('''
-        INSERT INTO conversations 
-        (session_id, user_message, ai_reply, char_count, passed_validation, timestamp)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (
-        session_id,
-        user_message,
-        ai_reply,
-        len(ai_reply),
-        1 if passed_validation else 0,
-        datetime.now().isoformat()
-    ))
-    conn.commit()
-    conn.close()
+    db = SessionLocal()
+    try:
+        conversation = Conversation(
+            session_id=session_id,
+            user_message=user_message,
+            ai_reply=ai_reply,
+            char_count=len(ai_reply),
+            passed_validation=passed_validation
+        )
+        db.add(conversation)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"DB error: {e}")
+    finally:
+        db.close()
 
 def get_all_conversations():
-    conn = sqlite3.connect('conversations.db')
-    c = conn.cursor()
-    c.execute('SELECT * FROM conversations ORDER BY timestamp DESC')
-    rows = c.fetchall()
-    conn.close()
-    return rows
+    db = SessionLocal()
+    try:
+        return db.query(Conversation).order_by(Conversation.timestamp.desc()).all()
+    finally:
+        db.close()
 
 def get_stats():
-    conn = sqlite3.connect('conversations.db')
-    c = conn.cursor()
-    c.execute('SELECT COUNT(*) FROM conversations')
-    total = c.fetchone()[0]
-    c.execute('SELECT COUNT(*) FROM conversations WHERE passed_validation = 1')
-    passed = c.fetchone()[0]
-    c.execute('SELECT AVG(char_count) FROM conversations')
-    avg_chars = c.fetchone()[0]
-    c.execute('SELECT user_message FROM conversations ORDER BY timestamp DESC LIMIT 5')
-    recent = [r[0] for r in c.fetchall()]
-    conn.close()
-    return {
-        "total": total,
-        "passed": passed,
-        "failed": total - passed,
-        "avg_chars": round(avg_chars or 0),
-        "recent_topics": recent
-    }
-
-if __name__ == '__main__':
-    init_db()
-    print("Database created successfully!")
-    print("Tables: conversations")
+    db = SessionLocal()
+    try:
+        total = db.query(Conversation).count()
+        passed = db.query(Conversation).filter(Conversation.passed_validation == True).count()
+        return {"total": total, "passed": passed, "failed": total - passed}
+    finally:
+        db.close()
