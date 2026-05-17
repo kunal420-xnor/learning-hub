@@ -10,6 +10,7 @@ export default defineConfig({
       '/spanish': 'http://localhost:5000',
       '/feedback': 'http://localhost:5000',
       '/create_dataset': 'http://localhost:5000',
+      '/rag': 'http://localhost:5000',
     }
   }
 })

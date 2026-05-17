@@ -6,7 +6,18 @@ import Login from "./pages/Login";
 
 export default function App() {
   const [page, setPage] = useState("home");
-  const [token, setToken] = useState(localStorage.getItem("token"));
+  const [token, setToken] = useState(() => {
+  const t = localStorage.getItem("token");
+  const exp = localStorage.getItem("token_exp");
+  if (!t || !exp) return null;
+  if (Date.now() > parseInt(exp)) {
+    localStorage.removeItem("token");
+    localStorage.removeItem("token_exp");
+    localStorage.removeItem("username");
+    return null;
+  }
+  return t;
+});
   const [username, setUsername] = useState(localStorage.getItem("username"));
 
   function handleLogin(user, tok) {

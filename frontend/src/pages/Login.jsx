@@ -21,8 +21,10 @@ export default function Login({ onLogin }) {
     setLoading(false);
 
     if (res.ok) {
+      
       localStorage.setItem("token", data.token);
       localStorage.setItem("username", data.username);
+      localStorage.setItem("token_exp", Date.now() + 8 * 60 * 60 * 1000);
       onLogin(data.username, data.token);
     } else {
       setError("Invalid username or password");

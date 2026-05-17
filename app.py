@@ -6,6 +6,8 @@ from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
 from langsmith import traceable, Client
 from langsmith.run_helpers import get_current_run_tree
+from datetime import timedelta
+from rag import load_pdf, query_collection, list_documents
 import ollama
 import uuid
 import re
@@ -15,7 +17,7 @@ from database import init_db, save_message
 app = Flask(__name__)
 app.secret_key = 'eli3-secret-key'
 app.config['JWT_SECRET_KEY'] = 'fde-jwt-super-secret-2026'
-app.config['JWT_ACCESS_TOKEN_EXPIRES'] = False
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(hours=8)
 
 CORS(app)
 jwt = JWTManager(app)
@@ -81,14 +83,9 @@ def login():
     data = request.json
     username = data.get('username')
     password = data.get('password')
-
     if username in USERS and USERS[username] == password:
         token = create_access_token(identity=username)
-        return jsonify({
-            "token": token,
-            "username": username,
-            "message": f"Welcome {username}!"
-        })
+        return jsonify({"token": token, "username": username, "message": f"Welcome {username}!"})
     return jsonify({"error": "Invalid credentials"}), 401
 
 @app.route('/explain', methods=['POST'])
@@ -132,9 +129,14 @@ def spanish_chat():
     data = request.json
     user_text = data['text']
 
+    context_chunks = query_collection("spanish_docs", user_text, n_results=2)
+    context = ""
+    if context_chunks:
+        context = "\n\nRelevant context from uploaded documents:\n" + "\n---\n".join(context_chunks)
+
     if session_id not in spanish_histories:
         spanish_histories[session_id] = [
-            {"role": "system", "content": SPANISH_PROMPT}
+            {"role": "system", "content": SPANISH_PROMPT + context}
         ]
 
     history = spanish_histories[session_id]
@@ -152,12 +154,38 @@ def spanish_chat():
                 run_id=run_id,
                 key="format_check",
                 score=1.0 if format_valid else 0.0,
-                comment="Format correct" if format_valid else "Missing SPANISH/ENGLISH/TIP sections"
+                comment="Format correct" if format_valid else "Missing sections"
             )
         except Exception as e:
-            print(f"LangSmith format feedback error: {e}")
+            print(f"LangSmith error: {e}")
 
-    return jsonify({"reply": reply, "run_id": run_id, "format_valid": format_valid, "user": current_user})
+    return jsonify({
+        "reply": reply,
+        "run_id": run_id,
+        "format_valid": format_valid,
+        "user": current_user,
+        "context_used": len(context_chunks) > 0
+    })
+
+@app.route('/rag/upload', methods=['POST'])
+@jwt_required()
+def upload_document():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+    file = request.files['file']
+    if not file.filename.endswith('.pdf'):
+        return jsonify({"error": "Only PDF files supported"}), 400
+    os.makedirs('documents', exist_ok=True)
+    filepath = f"documents/{file.filename}"
+    file.save(filepath)
+    chunks = load_pdf(filepath, "spanish_docs")
+    return jsonify({"message": f"Loaded {chunks} chunks from {file.filename}", "chunks": chunks})
+
+@app.route('/rag/status', methods=['GET'])
+@jwt_required()
+def rag_status():
+    count = list_documents("spanish_docs")
+    return jsonify({"chunks_loaded": count, "ready": count > 0})
 
 @app.route('/feedback', methods=['POST'])
 @jwt_required()
@@ -166,14 +194,8 @@ def feedback():
     run_id = data.get('run_id')
     score = data.get('score')
     comment = data.get('comment', '')
-
     try:
-        langsmith_client.create_feedback(
-            run_id=run_id,
-            key="user_feedback",
-            score=score,
-            comment=comment
-        )
+        langsmith_client.create_feedback(run_id=run_id, key="user_feedback", score=score, comment=comment)
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)})
@@ -186,7 +208,6 @@ def create_dataset():
     score = data.get('score')
     user_text = data.get('user_text')
     reply = data.get('reply')
-
     try:
         dataset_name = "learning-hub-evals"
         datasets = list(langsmith_client.list_datasets(dataset_name=dataset_name))
