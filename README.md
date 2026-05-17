@@ -229,4 +229,4 @@ See [CASE_STUDY.md](./CASE_STUDY.md) for the full technical write-up.
 ## Author
 
 **Kunal Singh** — QA Engineer transitioning to Forward Deployment Engineering  
-[LinkedIn](https://linkedin.com/in/yourprofile) · [GitHub](https://github.com/kunal420-xnor)
+[LinkedIn](https://www.linkedin.com/in/kunal-singh-a825ba15b/) · [GitHub](https://github.com/kunal420-xnor)
